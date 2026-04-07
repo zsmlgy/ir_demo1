@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>本地 RAG 问答系统</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 16px; }
+        textarea { width: 100%; min-height: 110px; padding: 12px; font-size: 16px; }
+        button { margin-top: 12px; padding: 10px 16px; font-size: 16px; cursor: pointer; }
+        .card { margin-top: 24px; padding: 16px; border: 1px solid #ddd; border-radius: 10px; }
+        .muted { color: #666; }
+        ul { line-height: 1.8; }
+        .row { display: flex; gap: 12px; flex-wrap: wrap; }
+    </style>
+</head>
+<body>
+<h1>Lucene + Spring AI + Ollama 本地 RAG 问答</h1>
+<p class="muted">先点击“抓取并建立索引”，再输入问题。</p>
+
+<div class="row">
+    <button onclick="crawl()">抓取并建立索引</button>
+    <button onclick="ask()">开始提问</button>
+</div>
+
+<textarea id="question" placeholder="例如：腾讯最近围绕 OpenClaw 推出了哪些产品？"></textarea>
+
+<div class="card">
+    <h3>回答</h3>
+    <div id="answer">暂无</div>
+</div>
+
+<div class="card">
+    <h3>参考新闻</h3>
+    <ul id="sources"></ul>
+</div>
+
+<script>
+    async function crawl() {
+        const resp = await fetch('/api/admin/crawl/tencent-tech?limit=10', { method: 'POST' });
+        const data = await resp.json();
+        alert(data.message);
+    }
+
+    async function ask() {
+        const question = document.getElementById('question').value.trim();
+        if (!question) {
+            alert('请输入问题');
+            return;
+        }
+
+        const resp = await fetch('/api/rag/ask', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ question })
+        });
+
+        const data = await resp.json();
+        document.getElementById('answer').innerText = data.answer || '无回答';
+
+        const ul = document.getElementById('sources');
+        ul.innerHTML = '';
+        (data.sources || []).forEach(s => {
+            const li = document.createElement('li');
+            li.innerHTML = `<a href="${s.url}" target="_blank">${s.title}</a> ${s.publishTime ? '(' + s.publishTime + ')' : ''}`;
+            ul.appendChild(li);
+        });
+    }
+</script>
+</body>
+</html>
