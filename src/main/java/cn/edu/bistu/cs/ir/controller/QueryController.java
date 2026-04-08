@@ -62,4 +62,24 @@ public class QueryController {
             return QueryResponse.genErr("检索过程中发生异常");
         }
     }
+    @GetMapping(value = "/hybrid", produces = "application/json;charset=UTF-8")
+    public QueryResponse<List<Map<String, String>>> hybridQuery(
+            @RequestParam(name = "kw") String kw,
+            @RequestParam(name = "topK", defaultValue = "10") int topK) {
+        try {
+            List<Document> docs = idxService.hybridSearch(kw, topK);
+            List<Map<String, String>> results = new ArrayList<>();
+            for (Document doc : docs) {
+                Map<String, String> record = new HashMap<>(4);
+                record.put("ID", doc.get("ID"));
+                record.put("TITLE", doc.get("TITLE"));
+                record.put("TIME", doc.get("TIME_STORE"));
+                results.add(record);
+            }
+            return QueryResponse.genSucc("混合检索成功", results);
+        } catch (Exception e) {
+            log.error("混合检索过程中发生异常:[{}]", e.getMessage(), e);
+            return QueryResponse.genErr("混合检索过程中发生异常");
+        }
+    }
 }
