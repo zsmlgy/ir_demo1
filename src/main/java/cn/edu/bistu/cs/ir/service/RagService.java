@@ -8,12 +8,15 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Service
 public class RagService {
 
     private final IdxService idxService;
     private final ChatClient chatClient;
+    private static final Logger log = LoggerFactory.getLogger(RagService.class);
 
     public RagService(IdxService idxService, ChatClient.Builder chatClientBuilder) {
         this.idxService = idxService;
@@ -21,7 +24,7 @@ public class RagService {
     }
 
     public AskResponse ask(String question) throws Exception {
-        List<Document> docs = idxService.searchNews(question, 5);
+        List<Document> docs = idxService.hybridSearch(question, 5);
 
         List<AskResponse.Source> sources = new ArrayList<>();
         StringBuilder context = new StringBuilder();
@@ -35,7 +38,7 @@ public class RagService {
 
             sources.add(new AskResponse.Source(title, url, publishTime));
 
-            context.append("【新闻").append(i).append("】\n")
+            context.append("〖新闻").append(i).append("〗\n")
                     .append("标题：").append(title).append("\n")
                     .append("时间：").append(publishTime).append("\n")
                     .append("链接：").append(url).append("\n")
@@ -50,6 +53,7 @@ public class RagService {
             answer = chatClient.prompt()
                     .system("""
 你是一个基于“本地腾讯新闻索引”回答问题的助手。
+
 请严格遵守：
 1. 只能依据我提供的新闻上下文回答；
 2. 不要编造新闻中不存在的事实；
@@ -67,6 +71,7 @@ public class RagService {
                     .call()
                     .content();
         }
+        log.info("===== 检索后拼接的 context =====\n{}", context);
 
         return new AskResponse(question, answer, sources);
     }

@@ -1,11 +1,11 @@
 package cn.edu.bistu.cs.ir.index;
 
 import cn.edu.bistu.cs.ir.config.Config;
+import cn.edu.bistu.cs.ir.service.SemanticSearchService;
 import cn.edu.bistu.cs.ir.utils.StringUtil;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.Document;
-import org.apache.lucene.document.KnnVectorField;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
@@ -13,48 +13,44 @@ import org.apache.lucene.index.Term;
 import org.apache.lucene.queryparser.classic.MultiFieldQueryParser;
 import org.apache.lucene.queryparser.classic.QueryParser;
 import org.apache.lucene.search.IndexSearcher;
-import org.apache.lucene.search.KnnVectorQuery;
+import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreDoc;
+import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.nio.file.Paths;
-import java.util.*;
-import java.util.stream.Collectors;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 @Component
 public class IdxService implements DisposableBean {
 
     private static final Logger log = LoggerFactory.getLogger(IdxService.class);
 
-    private static final Class<? extends Analyzer> DEFAULT_ANALYZER = StandardAnalyzer.class;
+    @SuppressWarnings("rawtypes")
+    private static final Class DEFAULT_ANALYZER = StandardAnalyzer.class;
 
-    private static final String VECTOR_FIELD = "CONTENT_VECTOR";
-
-    // 多档回退，尽量避免超长
-    private static final int[] EMBED_LIMITS = {1000, 700, 400};
-
-    // 查询一般很短，单独限制一下
-    private static final int QUERY_EMBED_LIMIT = 200;
-
-    private final EmbeddingModel embeddingModel;
+    private final SemanticSearchService semanticSearchService;
 
     private IndexWriter writer;
 
     public IdxService(@Autowired Config config,
-                      @Autowired EmbeddingModel embeddingModel) throws Exception {
-        this.embeddingModel = embeddingModel;
+                      @Autowired SemanticSearchService semanticSearchService) throws Exception {
+        this.semanticSearchService = semanticSearchService;
 
-        Analyzer analyzer = DEFAULT_ANALYZER.getConstructor().newInstance();
+        Analyzer analyzer = (Analyzer) DEFAULT_ANALYZER.getConstructor().newInstance();
         try {
             Directory index = FSDirectory.open(Paths.get(config.getIdx()));
             IndexWriterConfig writerConfig = new IndexWriterConfig(analyzer);
@@ -77,16 +73,15 @@ public class IdxService implements DisposableBean {
         }
 
         try {
-            // 向量字段失败时不影响普通索引写入
-            try {
-                addVectorField(doc);
-            } catch (Exception e) {
-                log.warn("向量字段生成失败，继续写普通索引。TITLE=[{}], 原因=[{}]",
-                        safe(doc.get("TITLE")), e.getMessage());
-            }
-
             writer.updateDocument(new Term(idFld, id), doc);
             writer.commit();
+
+            try {
+                semanticSearchService.upsertNews(doc);
+            } catch (Exception e) {
+                log.warn("Qdrant 写入失败，但 Lucene 已成功写入。id={}, err={}", id, e.getMessage());
+            }
+
             log.info("成功将ID为[{}]的文档加入索引", id);
             return true;
         } catch (IOException e) {
@@ -95,83 +90,14 @@ public class IdxService implements DisposableBean {
         }
     }
 
-    private void addVectorField(Document doc) {
-        String title = safe(doc.get("TITLE"));
-        String content = safe(doc.get("CONTENT"));
-
-        List<String> candidates = buildEmbeddingCandidates(title, content);
-        if (candidates.isEmpty()) {
-            return;
-        }
-
-        Exception lastException = null;
-
-        for (String text : candidates) {
-            try {
-                float[] vector = embeddingModel.embed(text);
-                doc.removeFields(VECTOR_FIELD);
-                doc.add(new KnnVectorField(VECTOR_FIELD, vector));
-                return;
-            } catch (Exception e) {
-                lastException = e;
-            }
-        }
-
-        throw new RuntimeException("多次尝试生成向量仍失败", lastException);
-    }
-
-    private List<String> buildEmbeddingCandidates(String title, String content) {
-        String cleanTitle = normalize(title);
-        String cleanContent = normalize(content);
-
-        List<String> candidates = new ArrayList<>();
-
-        for (int limit : EMBED_LIMITS) {
-            String truncatedContent = truncate(cleanContent, limit);
-            String merged = (cleanTitle + "\n" + truncatedContent).trim();
-            merged = truncate(merged, limit);
-            if (!merged.isBlank()) {
-                candidates.add(merged);
-            }
-        }
-
-        // 最后再加一个只用标题的兜底
-        if (!cleanTitle.isBlank()) {
-            candidates.add(truncate(cleanTitle, 120));
-        }
-
-        return candidates.stream().distinct().collect(Collectors.toList());
-    }
-
-    private String normalize(String text) {
-        if (text == null) {
-            return "";
-        }
-        return text.replaceAll("\\s+", " ").trim();
-    }
-
-    private String truncate(String text, int maxLen) {
-        if (text == null) {
-            return "";
-        }
-        if (text.length() <= maxLen) {
-            return text;
-        }
-        return text.substring(0, maxLen);
-    }
-
-    private String safe(String text) {
-        return text == null ? "" : text;
-    }
-
     public List<Document> queryByKw(String kw) throws Exception {
         try (DirectoryReader reader = DirectoryReader.open(writer)) {
             IndexSearcher searcher = new IndexSearcher(reader);
-            Analyzer analyzer = DEFAULT_ANALYZER.getConstructor().newInstance();
+            Analyzer analyzer = (Analyzer) DEFAULT_ANALYZER.getConstructor().newInstance();
             QueryParser parser = new QueryParser("TITLE", analyzer);
             Query query = parser.parse(QueryParser.escape(kw));
-
             TopDocs docs = searcher.search(query, 10);
+
             List<Document> results = new ArrayList<>();
             for (ScoreDoc doc : docs.scoreDocs) {
                 results.add(searcher.doc(doc.doc));
@@ -181,99 +107,61 @@ public class IdxService implements DisposableBean {
     }
 
     public List<ScoreDoc> keywordSearch(IndexSearcher searcher, String kw, int topK) throws Exception {
-        Analyzer analyzer = DEFAULT_ANALYZER.getConstructor().newInstance();
+        Analyzer analyzer = (Analyzer) DEFAULT_ANALYZER.getConstructor().newInstance();
         MultiFieldQueryParser parser = new MultiFieldQueryParser(
-                new String[]{"TITLE", "CONTENT"},
-                analyzer
+                new String[]{"TITLE", "CONTENT"}, analyzer
         );
         parser.setDefaultOperator(QueryParser.Operator.OR);
-
         Query query = parser.parse(QueryParser.escape(kw));
         TopDocs docs = searcher.search(query, topK);
-        return Arrays.asList(docs.scoreDocs);
-    }
 
-    public List<ScoreDoc> vectorSearch(IndexSearcher searcher, String kw, int topK) {
-        try {
-            String queryText = truncate(normalize(kw), QUERY_EMBED_LIMIT);
-            if (queryText.isBlank()) {
-                return Collections.emptyList();
-            }
-
-            float[] queryVector = embeddingModel.embed(queryText);
-            Query vectorQuery = new KnnVectorQuery(VECTOR_FIELD, queryVector, topK);
-            TopDocs docs = searcher.search(vectorQuery, topK);
-            return Arrays.asList(docs.scoreDocs);
-        } catch (Exception e) {
-            log.warn("向量检索失败，退化为仅关键词检索，kw=[{}], 原因=[{}]", kw, e.getMessage());
-            return Collections.emptyList();
-        }
+        List<ScoreDoc> results = new ArrayList<>();
+        Collections.addAll(results, docs.scoreDocs);
+        return results;
     }
 
     public List<Document> hybridSearch(String kw, int topK) throws Exception {
         try (DirectoryReader reader = DirectoryReader.open(writer)) {
             IndexSearcher searcher = new IndexSearcher(reader);
 
-            List<ScoreDoc> keywordDocs = keywordSearch(searcher, kw, topK);
-            List<ScoreDoc> vectorDocs = vectorSearch(searcher, kw, topK);
+            int candidateK = Math.max(topK * 4, 20);
 
-            // 两路都没结果
-            if (keywordDocs.isEmpty() && vectorDocs.isEmpty()) {
+            List<RankedDocId> lexicalHits = keywordSearchIds(searcher, kw, candidateK);
+            List<SemanticSearchService.SemanticHit> semanticHits = semanticSearchService.search(kw, candidateK);
+
+            if (lexicalHits.isEmpty() && semanticHits.isEmpty()) {
                 return Collections.emptyList();
             }
 
-            // 只有关键词结果
-            if (vectorDocs.isEmpty()) {
-                return keywordDocs.stream()
-                        .limit(topK)
-                        .map(sd -> {
-                            try {
-                                return searcher.doc(sd.doc);
-                            } catch (IOException e) {
-                                throw new RuntimeException(e);
-                            }
-                        })
-                        .collect(Collectors.toList());
+            Map<String, Double> rrfScores = new HashMap<>();
+            int fusionK = 60;
+
+            for (int i = 0; i < lexicalHits.size(); i++) {
+                rrfScores.merge(lexicalHits.get(i).docId(), 1.0 / (fusionK + i + 1), Double::sum);
             }
 
-            Map<Integer, Double> rrfScores = new HashMap<>();
-            int k = 60;
-
-            for (int i = 0; i < keywordDocs.size(); i++) {
-                int docId = keywordDocs.get(i).doc;
-                rrfScores.merge(docId, 1.0 / (k + i + 1), Double::sum);
+            for (int i = 0; i < semanticHits.size(); i++) {
+                rrfScores.merge(semanticHits.get(i).docId(), 1.0 / (fusionK + i + 1), Double::sum);
             }
 
-            for (int i = 0; i < vectorDocs.size(); i++) {
-                int docId = vectorDocs.get(i).doc;
-                rrfScores.merge(docId, 1.0 / (k + i + 1), Double::sum);
-            }
-
-            return rrfScores.entrySet().stream()
+            List<String> finalDocIds = rrfScores.entrySet().stream()
                     .sorted((a, b) -> Double.compare(b.getValue(), a.getValue()))
                     .limit(topK)
-                    .map(e -> {
-                        try {
-                            return searcher.doc(e.getKey());
-                        } catch (IOException ex) {
-                            throw new RuntimeException(ex);
-                        }
-                    })
-                    .collect(Collectors.toList());
+                    .map(Map.Entry::getKey)
+                    .toList();
+
+            return fetchDocsByIdsInOrder(searcher, finalDocIds);
         }
     }
 
     public List<Document> searchNews(String kw, int topK) throws Exception {
         try (DirectoryReader reader = DirectoryReader.open(writer)) {
             IndexSearcher searcher = new IndexSearcher(reader);
-            Analyzer analyzer = DEFAULT_ANALYZER.getConstructor().newInstance();
-
+            Analyzer analyzer = (Analyzer) DEFAULT_ANALYZER.getConstructor().newInstance();
             MultiFieldQueryParser parser = new MultiFieldQueryParser(
-                    new String[]{"TITLE", "CONTENT"},
-                    analyzer
+                    new String[]{"TITLE", "CONTENT"}, analyzer
             );
             parser.setDefaultOperator(QueryParser.Operator.OR);
-
             Query query = parser.parse(QueryParser.escape(kw));
             TopDocs docs = searcher.search(query, topK);
 
@@ -283,6 +171,52 @@ public class IdxService implements DisposableBean {
             }
             return results;
         }
+    }
+
+    public int rebuildSemanticIndexFromLucene() throws Exception {
+        try (DirectoryReader reader = DirectoryReader.open(writer)) {
+            IndexSearcher searcher = new IndexSearcher(reader);
+            TopDocs allDocs = searcher.search(new MatchAllDocsQuery(), reader.numDocs());
+
+            int count = 0;
+            for (ScoreDoc scoreDoc : allDocs.scoreDocs) {
+                Document doc = searcher.doc(scoreDoc.doc);
+                semanticSearchService.upsertNews(doc);
+                count++;
+            }
+            return count;
+        }
+    }
+
+    private List<RankedDocId> keywordSearchIds(IndexSearcher searcher, String kw, int topK) throws Exception {
+        List<ScoreDoc> hits = keywordSearch(searcher, kw, topK);
+        List<RankedDocId> results = new ArrayList<>();
+
+        for (ScoreDoc hit : hits) {
+            Document doc = searcher.doc(hit.doc);
+            String businessId = safe(doc.get("ID"));
+            if (!businessId.isBlank()) {
+                results.add(new RankedDocId(businessId, hit.score));
+            }
+        }
+        return results;
+    }
+
+    private List<Document> fetchDocsByIdsInOrder(IndexSearcher searcher, List<String> docIds) throws IOException {
+        List<Document> docs = new ArrayList<>();
+
+        for (String docId : docIds) {
+            TopDocs topDocs = searcher.search(new TermQuery(new Term("ID", docId)), 1);
+            if (topDocs.scoreDocs.length > 0) {
+                docs.add(searcher.doc(topDocs.scoreDocs[0].doc));
+            }
+        }
+
+        return docs;
+    }
+
+    private String safe(String text) {
+        return text == null ? "" : text;
     }
 
     @Override
@@ -297,4 +231,6 @@ public class IdxService implements DisposableBean {
             log.info("尝试关闭索引失败", e);
         }
     }
+
+    private record RankedDocId(String docId, float score) {}
 }

@@ -5,67 +5,577 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>本地 RAG 问答系统</title>
     <style>
-        body { font-family: Arial, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 16px; }
-        textarea { width: 100%; min-height: 110px; padding: 12px; font-size: 16px; }
-        button { margin-top: 12px; padding: 10px 16px; font-size: 16px; cursor: pointer; }
-        .card { margin-top: 24px; padding: 16px; border: 1px solid #ddd; border-radius: 10px; }
-        .muted { color: #666; }
-        ul { line-height: 1.8; }
-        .row { display: flex; gap: 12px; flex-wrap: wrap; }
+        :root {
+            --bg: #f5f7fb;
+            --panel: #ffffff;
+            --panel-soft: #f8fafc;
+            --border: #e5e7eb;
+            --text: #111827;
+            --muted: #6b7280;
+            --primary: #111827;
+            --primary-hover: #1f2937;
+            --accent: #2563eb;
+            --accent-soft: #eff6ff;
+            --success: #16a34a;
+            --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+            --radius: 20px;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(180deg, #f8fafc 0%, #f4f7fb 100%);
+            color: var(--text);
+            font-family: "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+        }
+
+        body {
+            min-height: 100vh;
+        }
+
+        .page {
+            max-width: 980px;
+            margin: 0 auto;
+            padding: 32px 20px 48px;
+        }
+
+        .hero {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .hero-left h1 {
+            margin: 0 0 8px;
+            font-size: 32px;
+            line-height: 1.15;
+            letter-spacing: -0.02em;
+        }
+
+        .hero-left p {
+            margin: 0;
+            color: var(--muted);
+            font-size: 15px;
+            line-height: 1.7;
+        }
+
+        .top-actions {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+        }
+
+        .ask-panel {
+            padding: 18px;
+            margin-bottom: 18px;
+        }
+
+        .composer-shell {
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            background: var(--panel-soft);
+            padding: 14px 14px 12px;
+        }
+
+        .composer-shell:focus-within {
+            border-color: #c7d2fe;
+            box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.08);
+            background: #fff;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 124px;
+            resize: vertical;
+            border: none;
+            outline: none;
+            background: transparent;
+            color: var(--text);
+            font-size: 16px;
+            line-height: 1.75;
+            padding: 0;
+        }
+
+        textarea::placeholder {
+            color: #9ca3af;
+        }
+
+        .composer-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-top: 14px;
+            flex-wrap: wrap;
+        }
+
+        .composer-tip {
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        button {
+            appearance: none;
+            border: none;
+            border-radius: 999px;
+            padding: 12px 18px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        button:disabled {
+            opacity: 0.65;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: #fff;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: var(--primary-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: #fff;
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: #f9fafb;
+            transform: translateY(-1px);
+        }
+
+        .btn-crawl {
+            background: var(--accent-soft);
+            color: var(--accent);
+            border: 1px solid #bfdbfe;
+            white-space: nowrap;
+        }
+
+        .btn-crawl:hover:not(:disabled) {
+            background: #dbeafe;
+            transform: translateY(-1px);
+        }
+
+        .status-line {
+            min-height: 24px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--muted);
+            font-size: 14px;
+            margin: 2px 2px 0;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: #d1d5db;
+            flex-shrink: 0;
+        }
+
+        .status-line.loading .status-dot {
+            background: var(--accent);
+            animation: pulse 1.1s infinite;
+        }
+
+        .status-line.success .status-dot {
+            background: var(--success);
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.35; transform: scale(0.9); }
+            50% { opacity: 1; transform: scale(1.15); }
+            100% { opacity: 0.35; transform: scale(0.9); }
+        }
+
+        .result-panel {
+            padding: 22px 20px;
+            margin-bottom: 18px;
+        }
+
+        .section-title {
+            margin: 0 0 14px;
+            font-size: 15px;
+            color: var(--muted);
+            font-weight: 700;
+            letter-spacing: 0.02em;
+        }
+
+        .answer-box {
+            min-height: 180px;
+            background: linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            padding: 18px 18px 20px;
+            font-size: 16px;
+            line-height: 1.9;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .answer-box.thinking {
+            color: var(--muted);
+        }
+
+        .caret {
+            display: inline-block;
+            width: 8px;
+            margin-left: 2px;
+            animation: blink 0.9s step-end infinite;
+        }
+
+        @keyframes blink {
+            50% { opacity: 0; }
+        }
+
+        .sources-panel {
+            padding: 20px;
+        }
+
+        .sources-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            display: grid;
+            gap: 12px;
+        }
+
+        .sources-list li {
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            background: #fff;
+            padding: 14px 16px;
+            transition: transform 0.18s ease, box-shadow 0.18s ease;
+        }
+
+        .sources-list li:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 20px rgba(15, 23, 42, 0.05);
+        }
+
+        .sources-list a {
+            color: var(--text);
+            font-weight: 600;
+            text-decoration: none;
+            line-height: 1.6;
+        }
+
+        .sources-list a:hover {
+            color: var(--accent);
+        }
+
+        .source-meta {
+            margin-top: 6px;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .empty {
+            color: var(--muted);
+            font-size: 14px;
+            padding: 6px 2px;
+        }
+
+        @media (max-width: 720px) {
+            .page {
+                padding: 18px 14px 28px;
+            }
+
+            .hero {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .top-actions {
+                width: 100%;
+                justify-content: flex-start;
+            }
+
+            .hero-left h1 {
+                font-size: 26px;
+            }
+
+            .composer-footer {
+                align-items: stretch;
+            }
+
+            .btn-group {
+                width: 100%;
+                justify-content: flex-end;
+            }
+        }
     </style>
 </head>
 <body>
-<h1>Lucene + Spring AI + Ollama 本地 RAG 问答</h1>
-<p class="muted">先点击“抓取并建立索引”，再输入问题。</p>
+<div class="page">
+    <section class="hero">
+        <div class="hero-left">
+            <h1>本地 RAG 问答</h1>
+            <p>先抓取腾讯科技新闻并建立索引，再发起提问。页面会在每次提问时清空旧答案，等待新答案返回后逐字显示。</p>
+        </div>
+        <div class="top-actions">
+            <button id="crawlBtn" class="btn-crawl" onclick="crawl()">抓取并建立索引</button>
+        </div>
+    </section>
 
-<div class="row">
-    <button onclick="crawl()">抓取并建立索引</button>
-    <button onclick="ask()">开始提问</button>
-</div>
+    <section class="panel ask-panel">
+        <div class="composer-shell">
+        <textarea
+                id="question"
+                placeholder="例如：腾讯最近围绕 OpenClaw 推出了哪些产品？"
+        ></textarea>
+            <div class="composer-footer">
+                <div class="composer-tip">Enter 提交，Shift + Enter 换行</div>
+                <div class="btn-group">
+                    <button id="clearBtn" class="btn-secondary" onclick="clearConversation()">清空</button>
+                    <button id="askBtn" class="btn-primary" onclick="ask()">发送问题</button>
+                </div>
+            </div>
+        </div>
+    </section>
 
-<textarea id="question" placeholder="例如：腾讯最近围绕 OpenClaw 推出了哪些产品？"></textarea>
+    <div id="statusLine" class="status-line">
+        <span class="status-dot"></span>
+        <span id="statusText">准备就绪</span>
+    </div>
 
-<div class="card">
-    <h3>回答</h3>
-    <div id="answer">暂无</div>
-</div>
+    <section class="panel result-panel">
+        <h3 class="section-title">回答</h3>
+        <div id="answer" class="answer-box">请先输入问题。</div>
+    </section>
 
-<div class="card">
-    <h3>参考新闻</h3>
-    <ul id="sources"></ul>
+    <section class="panel sources-panel">
+        <h3 class="section-title">参考新闻</h3>
+        <ul id="sources" class="sources-list"></ul>
+        <div id="sourcesEmpty" class="empty">当前暂无参考新闻。</div>
+    </section>
 </div>
 
 <script>
-    async function crawl() {
-        const resp = await fetch('/api/admin/crawl/tencent-tech?limit=10', { method: 'POST' });
-        const data = await resp.json();
-        alert(data.message);
+    const answerEl = document.getElementById('answer');
+    const sourcesEl = document.getElementById('sources');
+    const sourcesEmptyEl = document.getElementById('sourcesEmpty');
+    const questionEl = document.getElementById('question');
+    const askBtn = document.getElementById('askBtn');
+    const crawlBtn = document.getElementById('crawlBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const statusLine = document.getElementById('statusLine');
+    const statusText = document.getElementById('statusText');
+
+    let typingTimer = null;
+    let typingToken = 0;
+
+    function setStatus(text, type = '') {
+        statusText.textContent = text;
+        statusLine.className = 'status-line';
+        if (type) {
+            statusLine.classList.add(type);
+        }
     }
 
-    async function ask() {
-        const question = document.getElementById('question').value.trim();
-        if (!question) {
-            alert('请输入问题');
+    function resetAnswerArea(thinking = false) {
+        stopTyping();
+        answerEl.textContent = '';
+        answerEl.classList.remove('thinking');
+
+        if (thinking) {
+            answerEl.textContent = '思考中...';
+            answerEl.classList.add('thinking');
+        }
+    }
+
+    function clearSources() {
+        sourcesEl.innerHTML = '';
+        sourcesEmptyEl.style.display = 'block';
+    }
+
+    function renderSources(sources) {
+        sourcesEl.innerHTML = '';
+        if (!sources || !sources.length) {
+            sourcesEmptyEl.style.display = 'block';
             return;
         }
 
-        const resp = await fetch('/api/rag/ask', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ question })
-        });
+        sourcesEmptyEl.style.display = 'none';
 
-        const data = await resp.json();
-        document.getElementById('answer').innerText = data.answer || '无回答';
-
-        const ul = document.getElementById('sources');
-        ul.innerHTML = '';
-        (data.sources || []).forEach(s => {
+        sources.forEach((s) => {
             const li = document.createElement('li');
-            li.innerHTML = `<a href="${s.url}" target="_blank">${s.title}</a> ${s.publishTime ? '(' + s.publishTime + ')' : ''}`;
-            ul.appendChild(li);
+
+            const title = document.createElement('a');
+            title.href = s.url || '#';
+            title.target = '_blank';
+            title.rel = 'noopener noreferrer';
+            title.textContent = s.title || '未命名新闻';
+
+            const meta = document.createElement('div');
+            meta.className = 'source-meta';
+            meta.textContent = s.publishTime ? `发布时间：${s.publishTime}` : '发布时间未知';
+
+            li.appendChild(title);
+            li.appendChild(meta);
+            sourcesEl.appendChild(li);
         });
     }
+
+    function stopTyping() {
+        typingToken += 1;
+        if (typingTimer) {
+            clearTimeout(typingTimer);
+            typingTimer = null;
+        }
+    }
+
+    function typeAnswer(text) {
+        stopTyping();
+
+        const token = typingToken;
+        const content = text || '无回答';
+        let index = 0;
+
+        answerEl.textContent = '';
+        answerEl.classList.remove('thinking');
+
+        function step() {
+            if (token !== typingToken) return;
+
+            answerEl.textContent = content.slice(0, index);
+            if (index < content.length) {
+                answerEl.innerHTML = `${escapeHtml(content.slice(0, index))}<span class="caret">|</span>`;
+                index += 1;
+                typingTimer = setTimeout(step, 18);
+            } else {
+                answerEl.textContent = content;
+                typingTimer = null;
+            }
+        }
+
+        step();
+    }
+
+    function escapeHtml(str) {
+        return str
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll("'", '&#39;');
+    }
+
+    function setBusy(busy) {
+        askBtn.disabled = busy;
+        crawlBtn.disabled = busy;
+        clearBtn.disabled = busy;
+        questionEl.disabled = busy;
+    }
+
+    async function crawl() {
+        try {
+            setBusy(true);
+            setStatus('正在抓取并建立索引...', 'loading');
+
+            const resp = await fetch('/api/admin/crawl/tencent-tech?limit=10', {
+                method: 'POST'
+            });
+            const data = await resp.json();
+
+            setStatus(data.message || '索引建立完成', 'success');
+            alert(data.message || '索引建立完成');
+        } catch (e) {
+            console.error(e);
+            setStatus('抓取或建索引失败', '');
+            alert('抓取或建索引失败，请查看后端日志。');
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    async function ask() {
+        const question = questionEl.value.trim();
+        if (!question) {
+            alert('请输入问题');
+            questionEl.focus();
+            return;
+        }
+
+        try {
+            setBusy(true);
+            setStatus('正在思考中...', 'loading');
+
+            // 先清空上一次内容
+            resetAnswerArea(true);
+            clearSources();
+
+            const resp = await fetch('/api/rag/ask', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ question })
+            });
+
+            const data = await resp.json();
+
+            setStatus('回答生成完成', 'success');
+            renderSources(data.sources || []);
+            typeAnswer(data.answer || '无回答');
+        } catch (e) {
+            console.error(e);
+            resetAnswerArea(false);
+            answerEl.textContent = '请求失败，请查看后端日志或检查接口。';
+            clearSources();
+            setStatus('请求失败', '');
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    function clearConversation() {
+        stopTyping();
+        questionEl.value = '';
+        answerEl.textContent = '请先输入问题。';
+        answerEl.classList.remove('thinking');
+        clearSources();
+        setStatus('准备就绪');
+        questionEl.focus();
+    }
+
+    questionEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            if (!askBtn.disabled) {
+                ask();
+            }
+        }
+    });
+
+    clearSources();
 </script>
 </body>
 </html>
